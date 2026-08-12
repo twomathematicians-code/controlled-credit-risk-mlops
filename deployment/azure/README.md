@@ -41,20 +41,23 @@ client.data.create_or_update(Data(
 
 ## 3. Submit the training job
 
-`submit_job.py` packages `azureml_train.py` as a governed AML **command job**:
-a versioned dataset input, a named environment (`environment.yml`), the CPU
-cluster, and MLflow tracking that lands in the workspace automatically.
-
-```bash
-pip install azure-ai-ml azure-identity
-python deployment/azure/submit_job.py
-```
-
-`azureml_train.py` is identical to `python -m credit_risk.models.train`, so you
-can (and should) validate it locally first:
+`azureml_train.py` is the AML-shaped entry point — identical to
+`python -m credit_risk.models.train`, but it auto-detects the AML context
+(workspace-provided MLflow URI, mounted dataset) so the same script runs locally
+*and* on an AML compute cluster. Validate it locally first:
 
 ```bash
 python deployment/azure/azureml_train.py
+```
+
+To submit it as a governed AML **command job** (versioned dataset input, named
+environment from `environment.yml`, CPU cluster, MLflow logging), wrap it with a
+small `azure-ai-ml` v2 `command(...)` call — the canonical pattern shown in the
+[AML SDK v2 docs](https://learn.microsoft.com/azure/machine-learning/how-to-train-models).
+Run it on the cluster:
+
+```bash
+az ml job create --file job.yml --web
 ```
 
 ## 4. Promote a model to Production
@@ -97,6 +100,6 @@ touching the model directly.
 ## What is intentionally Azure-agnostic
 
 All model logic, feature engineering, monitoring, audit and business-impact code
-is **pure Python** and runs anywhere. Only these thin adapters are Azure-specific:
-`azureml_train.py`, `submit_job.py`, `environment.yml`. This keeps the system
-portable and the Azure surface auditable.
+is **pure Python** and runs anywhere. Only the thin `azureml_train.py` adapter
+(+ `environment.yml`) is Azure-specific. This keeps the system portable and the
+Azure surface auditable.

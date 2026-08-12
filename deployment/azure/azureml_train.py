@@ -14,7 +14,7 @@ Run locally to validate before submitting::
 
     python deployment/azure/azureml_train.py
 
-To submit on AML, see ``submit_job.py`` (uses the ``azure-ai-ml`` SDK v2).
+To run on Azure ML, see ``deployment/azure/README.md`` (workspace + command-job setup).
 """
 from __future__ import annotations
 

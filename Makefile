@@ -18,9 +18,6 @@ data-synthetic: ## Offline fallback: generate schema-matched synthetic data + in
 	$(PYTHON) -m credit_risk.data.synthetic
 	$(PYTHON) -m credit_risk.data.ingestion
 
-features: ## (Optional) Materialise feature-store snapshots
-	$(PYTHON) -c "from credit_risk.features.store import snapshot; snapshot()"
-
 train: ## Train candidate models, log to MLflow, register champion
 	$(PYTHON) -m credit_risk.models.train
 

@@ -87,7 +87,6 @@ def ensure_dirs() -> None:
         "data.train_path",
         "data.test_path",
         "data.drift_reference_path",
-        "features.store_dir",
         "monitoring.audit.log_path",
     ):
         try:

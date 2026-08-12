@@ -97,7 +97,7 @@ controlled-credit-risk-mlops/
 ├─ src/credit_risk/
 │  ├─ config.py                # config loader (env overrides, path resolution)
 │  ├─ data/{huggingface,synthetic,ingestion}.py   # HF source + offline fallback + ingest
-│  ├─ features/{engineering,store}.py   # sklearn pipeline + feature-store abstraction
+│  ├─ features/engineering.py     # sklearn pipeline (ratios + impute + encode + scale)
 │  ├─ models/{train,registry,explainability}.py
 │  ├─ serving/{app,schemas}.py          # FastAPI
 │  ├─ monitoring/{drift,performance,audit}.py
@@ -207,10 +207,8 @@ can explore the approval-rate vs loss trade-off.
 The system is Azure-agnostic by design; only thin adapters are Azure-specific.
 See [`deployment/azure/`](deployment/azure/README.md):
 
-- `azureml_train.py` — the same training, packaged as an AML **command job**
-  (runs locally, AML-ready).
-- `submit_job.py` — submits the job via the `azure-ai-ml` SDK v2 (versioned
-  dataset, named environment, compute cluster, MLflow).
+- `azureml_train.py` — the same training, packaged as an AML-ready entry point
+  (runs locally, auto-detects the AML workspace context).
 - `architecture.md` — reference architecture mapping every repo component to an
   Azure service (ADLS Gen2, Data Factory, AML registry, managed online endpoint,
   Log Analytics, Entra ID managed identities) plus the control/governance model.

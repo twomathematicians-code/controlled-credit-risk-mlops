@@ -1,4 +1,4 @@
-# Conda environment for the AML training/serve image (used by submit_job.py).
+# Conda environment for the AML training/serve image (see deployment/azure/README.md).
 name: credit-risk
 channels:
   - conda-forge

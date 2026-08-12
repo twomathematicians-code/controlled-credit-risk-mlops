@@ -68,7 +68,6 @@ features:
     - credit_to_income      # credit_amount / income
     - inquiry_intensity     # num_credit_inquiries / (num_active_credits + 1)
     - dpd_flag              # 1 if max_dpd_12m > 0 else 0
-  store_dir: data/processed/feature_store
 
 # ---------------------------------------------------------------------------
 # Model training + selection
