@@ -1,54 +1,57 @@
 # Controlled Credit-Risk MLOps
 
-> An end-to-end, production-grade **probability-of-default (PD) scoring system**
-> built for a *well-controlled* environment: data ingestion → feature engineering
-> → model training → **MLflow registry** → **FastAPI** serving → **drift &
-> performance monitoring** → **audit logging**, with **SHAP** explainability, a
-> business-impact model, a Streamlit dashboard, Docker + CI, and an **Azure**
-> deployment guide.
+[![CI](https://github.com/twomathematicians-code/controlled-credit-risk-mlops/actions/workflows/ci.yml/badge.svg)](https://github.com/twomathematicians-code/controlled-credit-risk-mlops/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-served-009688.svg)](https://fastapi.tiangolo.com/)
+[![MLflow](https://img.shields.io/badge/MLflow-registry-0194E2.svg)](https://mlflow.org/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-dashboard-FF4B4B.svg)](https://streamlit.io/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-This repository is intentionally one self-contained flagship project. It trains
-on **real data from Hugging Face** — the [Home Credit Default Risk](https://huggingface.co/datasets/deburky/home-credit-credit-risk-model-stability)
-benchmark (522k real loan applications) — so the model, the drift simulations
-and the business-impact trade-offs reflect genuine credit-risk behaviour. A
-schema-matched synthetic generator is bundled as an offline fallback.
+> A production-style **probability-of-default (PD)** scoring system built for a
+> *well-controlled* environment — from data ingestion to a monitored, explainable
+> served model — trained on **real credit data from Hugging Face**.
 
----
+**Why this project?** Three things that matter in risk/AI engineering, demonstrated end-to-end:
 
-## Problem statement
-
-A controlled production environment needs a credit-decisioning model that is not
-only accurate, but **governed, monitored, explainable and tied to money**:
-
-- *Who* is the served model, and *which version*? (registry + alias gating)
-- How do we know it's still valid in production? (drift + performance monitoring)
-- Can we justify every decline? (SHAP reason codes + append-only audit log)
-- What is it worth to the business? (expected-loss & cost-optimal thresholding)
+- 🏦 **Real data** — the [Home Credit Default Risk](https://huggingface.co/datasets/deburky/home-credit-credit-risk-model-stability) benchmark (522k real loan applications).
+- 🔁 **Full lifecycle** — ingestion → features → training → **MLflow registry** → **FastAPI** → **drift/performance monitoring** → **audit** → SHAP + dashboard.
+- 🛡️ **Governed by design** — only the `Production`-tagged model is served; every decision is explained and audit-logged; thresholds and costs live in one config.
 
 ---
 
-## Headline results (champion model, Home Credit test set)
+## Highlights
+
+| | |
+|---|---|
+| 📊 **Real data pipeline** | Home Credit via Hugging Face → clean schema → stratified sample → validated splits |
+| 🧠 **Model selection** | Logistic Regression · Gradient Boosting · **XGBoost** — chosen by cross-validated ROC-AUC |
+| 📝 **Registry & versioning** | MLflow Model Registry with a `Production` alias; explicit, logged promotion |
+| 🚀 **Serving** | FastAPI: `/predict`, `/predict/batch`, `/monitor/*` — with **SHAP** reason codes |
+| 🩺 **Monitoring** | Drift (PSI + KS) & performance alerts vs a frozen reference snapshot |
+| 📜 **Audit** | Append-only JSONL: model version, feature hash, PD, decision, reasons |
+| 💶 **Business impact** | Expected Loss (PD × LGD × EAD) + cost-optimal decision threshold |
+| 🐳 **Reproducible** | Docker + docker-compose, GitHub Actions CI, pinned deps, seed control |
+
+---
+
+## Results
+
+Trained on a 60k stratified sample of 522k Home Credit applications (~3.3% default). Champion = **XGBoost**.
 
 | Metric | Value |
 |---|---|
-| Dataset | Home Credit Default Risk — 60k stratified sample of 522k real applications (~3.3% default) |
-| Champion model | XGBoost (`xgboost`) |
 | Test ROC-AUC | **0.711** (95% CI **0.686 – 0.734**, 300-bootstrap) |
-| Test PR-AUC | 0.104 (base default rate ≈ 3.3%) |
+| Test PR-AUC | 0.104 |
 | CV ROC-AUC (5-fold) | 0.730 ± 0.013 |
-| **Cost-optimal PD threshold** | **≈ 13.3%** (realised loss + opportunity cost minimised) |
-| Approval rate @ optimum | 97.6% (declines only the highest-risk tail) |
+| Cost-optimal PD threshold | ≈ 13.3% |
 
-> The threshold is chosen to minimise **realised loss (false negatives × LGD × EAD)
-> + opportunity cost (false positives × foregone profit)**, not to maximise F1 —
-> the framing that matters in a risk-controlled setting. The dashboard's
-> interactive slider lets you explore the full approval/loss trade-off.
+AUC ≈ 0.71 is the realistic range for this benchmark — the value of this project is the **engineering and governance around the model**, not a leaderboard number.
 
 ---
 
 ## Gallery
 
-| Streamlit dashboard | MLflow registry (Production alias) |
+| Streamlit dashboard | MLflow registry (`Production` alias) |
 |---|---|
 | ![Dashboard](docs/images/dashboard.png) | ![MLflow registry](docs/images/mlflow_registry.png) |
 
@@ -57,18 +60,18 @@ only accurate, but **governed, monitored, explainable and tied to money**:
 | ![API docs](docs/images/api_docs.png) | ![Results](docs/images/results_overview.png) |
 
 <details>
-<summary>Global SHAP summary (click to expand)</summary>
+<summary>Global SHAP summary</summary>
 
 ![SHAP](docs/images/shap_summary.png)
 </details>
 
 ---
 
-## Architecture
+## How it works
 
 ```mermaid
 flowchart LR
-    HF[(Hugging Face\nHome Credit dataset)] --> DL[Loader\ndownload + clean + map]
+    HF[(Hugging Face\nHome Credit)] --> DL[Loader\ndownload + clean + map]
     SYN[Synthetic\noffline fallback] -.-> DL
     DL --> ING[Ingestion\nschema + null policy + split]
     ING --> REF[(Drift reference\nfrozen snapshot)]
@@ -76,7 +79,7 @@ flowchart LR
     FE --> TR[Training\nCV + bootstrap CI]
     TR -->|log| MLF[(MLflow tracking)]
     TR -->|champion| REG[(Model registry\nProduction alias)]
-    REG --> API[FastAPI\n/predict /explain /monitor]
+    REG --> API[FastAPI\n/predict /monitor]
     API --> AUD[(Audit log\nJSONL)]
     API --> MON[Monitoring\ndrift PSI/KS + performance]
     FE --> XAI[SHAP explainability]
@@ -84,49 +87,56 @@ flowchart LR
     REG --> DASH[Streamlit dashboard]
 ```
 
+**One key idea:** the *same* sklearn feature pipeline transforms data at train time and at serve time, so live requests can never silently drift from what the model was trained on.
+
 ---
 
 ## Repository structure
 
 ```
 controlled-credit-risk-mlops/
-├─ config.yaml                 # single source of truth (thresholds, costs, model)
+├─ config.yaml                 # single source of truth (features, thresholds, costs)
 ├─ Makefile                    # data / train / serve / test / dashboard
-├─ pyproject.toml              # package + ruff + pytest config
-├─ Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 ├─ src/credit_risk/
 │  ├─ config.py                # config loader (env overrides, path resolution)
-│  ├─ data/{huggingface,synthetic,ingestion}.py   # HF source + offline fallback + ingest
-│  ├─ features/engineering.py     # sklearn pipeline (ratios + impute + encode + scale)
-│  ├─ models/{train,registry,explainability}.py
-│  ├─ serving/{app,schemas}.py          # FastAPI
-│  ├─ monitoring/{drift,performance,audit}.py
+│  ├─ data/
+│  │  ├─ huggingface.py        # primary source: Home Credit download + clean + sample
+│  │  ├─ synthetic.py          # offline fallback (schema-matched)
+│  │  └─ ingestion.py          # schema validation, null policy, splits, drift reference
+│  ├─ features/engineering.py  # sklearn pipeline (ratios + impute + encode + scale)
+│  ├─ models/
+│  │  ├─ train.py              # CV + bootstrap CI, MLflow logging, registration
+│  │  ├─ registry.py           # MLflow registry: promote/load Production model
+│  │  └─ explainability.py     # SHAP global + per-prediction reason codes
+│  ├─ serving/{app,schemas}.py # FastAPI + Pydantic contract
+│  ├─ monitoring/
+│  │  ├─ drift.py              # PSI + KS vs frozen reference
+│  │  ├─ performance.py        # realised metrics + governed alerts
+│  │  └─ audit.py              # append-only JSONL audit trail
 │  ├─ business.py              # expected loss + cost-optimal threshold
 │  └─ utils/{logging,io}.py
+├─ dashboard/app.py            # Streamlit business dashboard
 ├─ tests/                      # data, features, business, drift, audit, serving, train
-├─ notebooks/01_eda_and_validation.py
-├─ dashboard/app.py            # Streamlit
-└─ deployment/azure/           # azureml_train.py + submit_job.py + guide + architecture
+├─ notebooks/                  # EDA + statistical validation
+├─ docs/                       # README figures + figure generator
+├─ deployment/azure/           # AML-ready training script + architecture + guide
+├─ Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 ```
 
 ---
 
 ## Quickstart
 
+**Prerequisites:** Python 3.10+ and network access (the default data source is Hugging Face).
+
 ```bash
-# 1. Install (editable, with dev + dashboard extras)
-make install            # or: pip install -e ".[dev,dashboard]"
+git clone https://github.com/twomathematicians-code/controlled-credit-risk-mlops
+cd controlled-credit-risk-mlops
 
-# 2. Download real data (Home Credit, from Hugging Face) + train + register
-make data               # `make data-synthetic` for the offline fallback
-make train              # logs to MLflow, registers v1, promotes to Production
-
-# 3. Serve the Production model
-make serve              # http://127.0.0.1:8000
-
-# 4. (optional) Business dashboard + MLflow UI
-make dashboard          # Streamlit on :8501
-make mlflow-ui          # tracking UI on :5000
+make install            # pip install -e ".[dev,dashboard]"
+make data               # download Home Credit from Hugging Face + ingest
+make train              # train → log to MLflow → register champion → Production
+make serve              # FastAPI on http://127.0.0.1:8000
 ```
 
 Smoke-test the API:
@@ -144,12 +154,7 @@ curl -s -X POST http://127.0.0.1:8000/predict -H "Content-Type: application/json
 # {"pd_score":...,"decision":"APPROVE","reasons":[...]}
 ```
 
-### Docker
-
-```bash
-make data && make train        # produce ./data and ./mlruns locally first
-docker compose up -d           # API on :8000 + MLflow UI on :5000
-```
+Other targets: `make dashboard` (Streamlit :8501) · `make mlflow-ui` (:5000) · `make test` · `make data-synthetic` (offline fallback).
 
 ---
 
@@ -164,84 +169,63 @@ docker compose up -d           # API on :8000 + MLflow UI on :5000
 | `POST` | `/monitor/performance` | Realised metrics + threshold-breach alerts (needs labels) |
 | `GET`  | `/metrics` | Operational snapshot (model pin + audit volume) |
 
-Every `/predict` is written to the append-only **audit log** with model name +
-version, timestamp, a feature hash, the PD, the decision and the reason codes.
+Every `/predict` is written to the append-only **audit log** with model name + version, timestamp, a feature hash, the PD, the decision and the reason codes.
 
 ---
 
-## Monitoring & governance features
+## Monitoring & governance
 
-- **Drift detection** (`monitoring/drift.py`): Population Stability Index (PSI)
-  on numeric features + KS test, category-frequency PSI on categoricals, and a
-  PSI on the score distribution — all measured against a **frozen reference**.
-  Governed thresholds live in `config.yaml` (warn 0.10 / fail 0.25).
-- **Performance monitoring** (`monitoring/performance.py`): realised ROC-AUC,
-  precision, default-rate drift vs reference, with configurable alert thresholds.
-- **Audit logging** (`monitoring/audit.py`): append-only JSONL; deterministic
-  feature hash per decision for traceability.
-- **Registry gating** (`models/registry.py`): only the `Production` alias is
-  served; promotion is an explicit, logged action (MLflow 3 alias API, with a
-  legacy stage fallback).
-- **Reproducibility**: single `config.yaml`, pinned dependencies, seed control,
-  Dockerfile, and CI that trains end-to-end on every push.
+- **Drift** — Population Stability Index (numeric) + KS test, category-frequency PSI, and score-distribution PSI, all measured against a **frozen reference**. Governed thresholds live in `config.yaml` (warn 0.10 / fail 0.25).
+- **Performance** — realised ROC-AUC, precision, default-rate drift, with configurable alert thresholds.
+- **Audit** — append-only JSONL; deterministic feature hash per decision.
+- **Registry gating** — only the `Production` alias is served; promotion is an explicit, logged action (MLflow 3 alias API, with a legacy stage fallback).
 
 ---
 
-## Business impact model (`business.py`)
+## Business impact
 
-Two lenses on cost, used by the dashboard and the threshold optimiser:
+Two lenses on cost (`src/credit_risk/business.py`):
 
-- **Forward-looking expected loss** of the approved book: `Σ PD · LGD · EAD`
-  (usable at scoring time, before outcomes are known).
-- **Realised total cost** used to tune the threshold:
-  `realised_loss (FN · LGD · EAD) + opportunity_cost (FP · cost_false_positive)`.
+- **Forward-looking expected loss** of the approved book: `Σ PD · LGD · EAD` (usable before outcomes are known).
+- **Realised total cost** used to tune the threshold: `realised loss (FN · LGD · EAD) + opportunity cost (FP · cost_false_positive)`.
 
-`business.optimal_threshold` finds the PD cutoff that minimises realised total
-cost. The Streamlit dashboard exposes an interactive simulator so business users
-can explore the approval-rate vs loss trade-off.
+`optimal_threshold` finds the cutoff that minimises realised total cost. The dashboard exposes an interactive simulator so you can explore the approval-rate vs loss trade-off.
 
 ---
 
-## Azure deployment
-
-The system is Azure-agnostic by design; only thin adapters are Azure-specific.
-See [`deployment/azure/`](deployment/azure/README.md):
-
-- `azureml_train.py` — the same training, packaged as an AML-ready entry point
-  (runs locally, auto-detects the AML workspace context).
-- `architecture.md` — reference architecture mapping every repo component to an
-  Azure service (ADLS Gen2, Data Factory, AML registry, managed online endpoint,
-  Log Analytics, Entra ID managed identities) plus the control/governance model.
-
----
-
-## Testing
+## Testing & CI
 
 ```bash
-make test        # pytest (data, features, business, drift, audit, serving, train)
-make lint        # ruff
+make test     # pytest — data, features, business, drift, audit, serving, train
+make lint     # ruff
 ```
 
-CI (`.github/workflows/ci.yml`) runs three jobs on every push: **lint + unit
-tests**, an **end-to-end** job (data → train → register → live smoke test), and a
-**Docker build**.
+CI (`.github/workflows/ci.yml`) runs three jobs per push: **lint + unit tests**, an **end-to-end** job (data → train → register → live smoke test), and a **Docker build**.
 
 ---
 
-## Design notes & honest limitations
+## Deploy
 
-- **Data**: trained on the real **Home Credit Default Risk** dataset from Hugging
-  Face (60k stratified sample of 522k applications, ~3.3% default). AUC ≈ 0.71 is
-  realistic for this benchmark with the selected feature set — Home Credit is
-  genuinely hard. A schema-matched synthetic generator is bundled for offline/CI
-  use (`make data-synthetic`); to use your own data, point `data.huggingface` in
-  `config.yaml` at another HF dataset or replace the loader — every downstream
-  stage is data-agnostic.
-- **Models**: scikit-learn (LogisticRegression baseline + GradientBoosting) plus
-  **XGBoost** as a third candidate — the champion (XGBoost on this data) is
-  selected by CV ROC-AUC. The pipeline/registry abstractions make swapping in
-  other estimators a one-line change.
-- **Statistical validation**: stratified k-fold CV + bootstrap AUC CI +
-  calibration curve (see `notebooks/01_eda_and_validation.py`).
-- **MLflow 3**: uses the modern **alias**-based registry; falls back to stages
-  transparently on older installs.
+- **Docker** — `make data && make train` then `docker compose up -d` (API :8000 + MLflow UI :5000).
+- **Streamlit Community Cloud** — the dashboard is self-bootstrapping (trains a fast model in memory if no artifacts exist). See [`dashboard/README.md`](dashboard/README.md): main file `dashboard/app.py`, requirements `dashboard/requirements.txt`.
+- **Azure** — [`deployment/azure/`](deployment/azure/README.md): an AML-ready training entry point, conda environment, and a reference architecture mapping every component to Azure services (ADLS Gen2, Data Factory, AML registry, managed online endpoint, Log Analytics, Entra managed identities) plus the control model.
+
+---
+
+## Tech stack
+
+`Python` · `scikit-learn` · `XGBoost` · `pandas` · `MLflow` · `FastAPI` · `SHAP` · `Streamlit` · `Docker` · `GitHub Actions` · `Hugging Face` · `Azure ML` (guide)
+
+---
+
+## Limitations & roadmap
+
+- Sampled subset of Home Credit with a selected feature set — not competition-depth engineering.
+- AUC ≈ 0.71 is a demonstration of the *engineering/governance*, not a deployable lending model.
+- **Next:** probability calibration (Platt/isotonic), time-based stability testing, a retrain trigger wired to drift alerts, champion–challenger serving.
+
+---
+
+## License
+
+[MIT](LICENSE) — built for demonstration and learning.
