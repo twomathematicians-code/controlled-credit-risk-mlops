@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.python-version
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Data & model artifacts (regenerated locally — do not commit)
+data/raw/*
+data/processed/*
+data/drift_reference/*
+!data/**/.gitkeep
+mlruns/
+mlflow.db
+mlflow.db-*
+*.pkl
+*.joblib
+*.parquet
+*.csv
+audit.jsonl
+
+# Notebooks
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Secrets
+.env

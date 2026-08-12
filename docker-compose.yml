@@ -1,0 +1,48 @@
+# Local stack: FastAPI scoring service + MLflow tracking UI.
+#
+# Usage:
+#   make data && make train      # produce ./data and ./mlruns + mlflow.db locally
+#   docker compose up -d         # serve the trained model + open MLflow UI
+#
+# Both services share the local MLflow sqlite DB and artifact store via bind
+# mounts, so the model trained on the host is visible inside the containers.
+services:
+  app:
+    build: .
+    image: credit-risk-mlops:latest
+    container_name: credit-risk-api
+    ports:
+      - "8000:8000"
+    environment:
+      - MLFLOW_TRACKING_URI=sqlite:///mlflow.db
+      - MLFLOW_REGISTRY_URI=sqlite:///mlflow.db
+      - SERVING_HOST=0.0.0.0
+      - SERVING_PORT=8000
+      - SERVING_MODEL_STAGE=Production
+    volumes:
+      - ./data:/app/data
+      - ./mlruns:/app/mlruns
+      - ./mlflow.db:/app/mlflow.db
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  mlflow:
+    image: python:3.11-slim
+    container_name: credit-risk-mlflow
+    depends_on: [app]
+    ports:
+      - "5000:5000"
+    command: >
+      bash -lc "pip install --quiet mlflow && mlflow ui
+      --backend-store-uri sqlite:///mlflow.db
+      --default-artifact-root /app/mlruns
+      --host 0.0.0.0 --port 5000"
+    volumes:
+      - ./mlflow.db:/app/mlflow.db
+      - ./mlruns:/app/mlruns
+    restart: unless-stopped

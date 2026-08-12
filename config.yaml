@@ -1,0 +1,147 @@
+# =============================================================================
+# controlled-credit-risk-mlops — central configuration
+# Single source of truth for data, features, model, serving, monitoring and the
+# business impact model. Editing this file is the *only* change required to tune
+# the system — every module reads from here via `credit_risk.config.get_config()`.
+# =============================================================================
+
+random_seed: 42
+
+# ---------------------------------------------------------------------------
+# Data generation (synthetic applicants) + ingestion
+# ---------------------------------------------------------------------------
+data:
+  raw_path: data/raw/applicants.parquet
+  processed_path: data/processed/applicants_processed.parquet
+  train_path: data/processed/train.parquet
+  test_path: data/processed/test.parquet
+  drift_reference_path: data/drift_reference/reference.parquet
+  n_samples: 20000
+  default_rate: 0.08            # baseline probability of default (PD) signal
+  fraud_rate: 0.015            # synthetic "application fraud" cases (mislabelled income)
+  test_size: 0.2
+  # Columns expected by ingestion — schema validation enforces presence + types.
+  numeric_features:
+    - age
+    - annual_income
+    - months_employed
+    - num_open_accounts
+    - num_credit_inquiries_12m
+    - total_debt
+    - credit_limit
+    - missed_payments_12m
+    - credit_card_balance
+  categorical_features:
+    - employment_status
+    - home_ownership
+    - loan_purpose
+    - region
+  id_column: application_id
+  target_column: default_flag
+
+# ---------------------------------------------------------------------------
+# Feature engineering
+# ---------------------------------------------------------------------------
+features:
+  numeric_features:
+    - age
+    - annual_income
+    - months_employed
+    - num_open_accounts
+    - num_credit_inquiries_12m
+    - total_debt
+    - credit_limit
+    - missed_payments_12m
+    - credit_card_balance
+  categorical_features:
+    - employment_status
+    - home_ownership
+    - loan_purpose
+    - region
+  # Engineered ratios derived from raw numerics (defined in features.engineering)
+  engineered:
+    - debt_to_income        # total_debt / annual_income
+    - credit_utilization    # credit_card_balance / credit_limit
+    - inquiries_per_account # num_credit_inquiries_12m / num_open_accounts
+    - payment_burden        # missed_payments_12m / 12
+  store_dir: data/processed/feature_store
+
+# ---------------------------------------------------------------------------
+# Model training + selection
+# ---------------------------------------------------------------------------
+model:
+  candidates:
+    - logreg
+    - gbdt
+    - xgboost
+  cv_folds: 5
+  # Champion = best mean CV ROC-AUC; the others are logged as comparison runs.
+  scoring: roc_auc
+  logreg:
+    C: 1.0
+    max_iter: 500
+  gbdt:
+    n_estimators: 150
+    learning_rate: 0.06
+    max_depth: 3
+    subsample: 0.9
+    random_state: 42
+  xgboost:
+    n_estimators: 200
+    learning_rate: 0.05
+    max_depth: 3
+    subsample: 0.9
+    colsample_bytree: 0.9
+    random_state: 42
+
+# ---------------------------------------------------------------------------
+# MLflow tracking + registry
+# ---------------------------------------------------------------------------
+mlflow:
+  tracking_uri: sqlite:///mlflow.db
+  registry_uri: sqlite:///mlflow.db
+  experiment_name: credit_risk_pd
+  registry_model_name: credit_risk_pd_model
+  artifact_location: mlruns   # local artifact store
+
+# ---------------------------------------------------------------------------
+# Serving
+# ---------------------------------------------------------------------------
+serving:
+  host: 0.0.0.0
+  port: 8000
+  model_stage: Production      # only this stage is served
+  default_threshold: 0.5       # PD above => predicted default (DECLINE)
+  decision_labels:
+    decline: DECLINE
+    approve: APPROVE
+
+# ---------------------------------------------------------------------------
+# Monitoring — drift + performance + audit
+# ---------------------------------------------------------------------------
+monitoring:
+  drift:
+    psi_warn: 0.1              # 0.1–0.25 = slight drift
+    psi_fail: 0.25             # > 0.25 = significant drift
+    ks_alpha: 0.05
+  performance:
+    min_roc_auc: 0.72
+    max_default_rate_drift: 0.03   # absolute change vs reference realised default rate
+    min_precision: 0.30
+  audit:
+    log_path: data/processed/audit.jsonl
+
+# ---------------------------------------------------------------------------
+# Business impact model  (Expected Loss = PD * LGD * EAD)
+# ---------------------------------------------------------------------------
+business:
+  # Loss Given Default — fraction of exposure lost if a borrower defaults.
+  lgd: 0.55
+  # Exposure At Default — assumed average exposure per applicant (currency units).
+  ead: 25000
+  # Operational cost of a FALSE POSITIVE — the profit foregone when we wrongly
+  # decline a good customer (lost origination / lifetime margin, currency units).
+  cost_false_positive: 2000
+  # Cost weight applied to a FALSE NEGATIVE (approving a future default) relative
+  # to EL. Used by the threshold simulator to find the cost-optimal cutoff.
+  false_negative_cost_multiple: 1.0
