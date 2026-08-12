@@ -11,7 +11,7 @@ from credit_risk.features.engineering import build_pipeline
 
 @pytest.fixture(scope="session")
 def small_df():
-    return generate(n_samples=800, seed=7, default_rate=0.12, fraud_rate=0.02)
+    return generate(n_samples=800, seed=7, default_rate=0.12)
 
 
 @pytest.fixture(scope="session")

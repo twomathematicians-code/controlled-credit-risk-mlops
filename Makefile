@@ -10,7 +10,11 @@ help: ## Show this help
 install: ## Install the package + dev deps in editable mode
 	$(PYTHON) -m pip install -e ".[dev,dashboard]"
 
-data: ## Generate synthetic raw data and run ingestion -> processed splits
+data: ## Download real Home Credit data from Hugging Face + run ingestion
+	$(PYTHON) -m credit_risk.data.huggingface
+	$(PYTHON) -m credit_risk.data.ingestion
+
+data-synthetic: ## Offline fallback: generate schema-matched synthetic data + ingest
 	$(PYTHON) -m credit_risk.data.synthetic
 	$(PYTHON) -m credit_risk.data.ingestion
 

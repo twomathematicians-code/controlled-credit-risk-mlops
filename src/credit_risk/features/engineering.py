@@ -3,10 +3,10 @@
 Builds a reusable, serialisable scikit-learn pipeline:
     [RatioAdder] -> ColumnTransformer{numeric: impute+scale, cat: impute+onehot}
 
-Engineered ratios (defined in config) capture the strongest credit-risk signals:
-debt-to-income, credit utilisation, inquiry intensity and payment burden. The
-same pipeline is used at train time and at serve time, guaranteeing that live
-requests are transformed identically to training data.
+Engineered features (defined in config) capture the strongest credit-risk
+signals from the Home Credit schema: debt/credit-to-income ratios, inquiry
+intensity, and a days-past-due indicator. The same pipeline is used at train
+and serve time, guaranteeing live requests are transformed identically.
 """
 from __future__ import annotations
 
@@ -20,33 +20,37 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from ..config import get_config
 
-# (engineered name) -> (numerator column, denominator column)
+# name -> (numerator_col, denominator_col, additive offset on denominator)
+# value = numerator / (denominator + offset)
 RATIO_SPECS = {
-    "debt_to_income": ("total_debt", "annual_income"),
-    "credit_utilization": ("credit_card_balance", "credit_limit"),
-    "inquiries_per_account": ("num_credit_inquiries_12m", "num_open_accounts"),
-    "payment_burden": ("missed_payments_12m", None),  # denominator constant (12 months)
+    "debt_to_income": ("total_debt", "income", 0),
+    "credit_to_income": ("credit_amount", "income", 0),
+    "inquiry_intensity": ("num_credit_inquiries", "num_active_credits", 1),
+}
+# name -> (column, threshold)  -> value = 1.0 if column > threshold else 0.0
+INDICATOR_SPECS = {
+    "dpd_flag": ("max_dpd_12m", 0),
 }
 
 
 class RatioAdder(BaseEstimator, TransformerMixin):
-    """Add engineered ratio features to a DataFrame, guarding divide-by-zero."""
+    """Add engineered ratio + indicator features, guarding divide-by-zero."""
 
-    def __init__(self, specs: dict[str, tuple] | None = None):
-        self.specs = specs or RATIO_SPECS
+    def __init__(self, ratios: dict | None = None, indicators: dict | None = None):
+        self.ratios = ratios or RATIO_SPECS
+        self.indicators = indicators or INDICATOR_SPECS
 
     def fit(self, X, y=None):
         return self
 
     def transform(self, X):
         df = X.copy()
-        for name, (num, den) in self.specs.items():
+        for name, (num, den, off) in self.ratios.items():
             numerator = df[num].astype(float)
-            if den is None:
-                df[name] = numerator / 12.0
-            else:
-                denominator = df[den].replace(0, np.nan).astype(float)
-                df[name] = (numerator / denominator).replace([np.inf, -np.inf], np.nan)
+            denominator = df[den].astype(float) + off
+            df[name] = (numerator / denominator).replace([np.inf, -np.inf], np.nan)
+        for name, (col, thresh) in self.indicators.items():
+            df[name] = (df[col].astype(float) > thresh).astype(float)
         return df
 
 
@@ -54,7 +58,9 @@ def _columns():
     cfg = get_config().features
     numeric = list(cfg.numeric_features)
     categorical = list(cfg.categorical_features)
-    engineered = [n for n in cfg.engineered if n in RATIO_SPECS]
+    engineered = [
+        n for n in cfg.engineered if n in RATIO_SPECS or n in INDICATOR_SPECS
+    ]
     return numeric, categorical, engineered
 
 

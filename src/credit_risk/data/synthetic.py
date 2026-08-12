@@ -1,19 +1,11 @@
-"""Synthetic credit-applicant data generator.
+"""Offline synthetic fallback (schema-matched to the Home Credit canonical schema).
 
-Why synthetic?
-  * Fully self-contained repo (no dataset download / licensing) — ideal for CI.
-  * We *control the data-generating process*, so there is genuine learnable signal
-    (the latent risk score) and a known target default rate.
+Used only when no network / HF is unavailable (e.g. air-gapped dev or as a
+CI fallback). It produces the *same columns* as ``data.huggingface`` with a
+known latent signal so every downstream stage still runs, but the **default**
+data source is Hugging Face — see ``data.huggingface``.
 
-The generator:
-  1. Draws raw applicant features from sensible, lightly-correlated distributions.
-  2. Computes a latent risk score from realistic ratios (DTI, utilisation, missed
-     payments, employment tenure, income, employment status).
-  3. Calibrates the intercept so the realised default rate ~= ``default_rate``.
-  4. Injects an ``is_fraud`` subset (income materially overstated) so the dataset
-     also supports a fraud-scoring framing — these cases default more often.
-
-Run as a module: ``python -m credit_risk.data.synthetic``.
+Run as a module: ``python -m credit_risk.data.synthetic``
 """
 from __future__ import annotations
 
@@ -23,146 +15,112 @@ import numpy as np
 import pandas as pd
 
 from ..config import get_config, path
+from ..utils.io import write_parquet
 from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# ---------------------------------------------------------------------------
-# Reproducible sampling helpers
-# ---------------------------------------------------------------------------
-def _lognormal(rng, mean, sd, size, low=None, high=None):
-    """Sample from a lognormal whose underlying normal has given mean/sd of log."""
-    x = np.exp(rng.normal(np.log(mean), sd, size=size))
-    if low is not None or high is not None:
-        x = np.clip(x, low if low is not None else x.min(), high if high is not None else x.max())
-    return x
+DEFAULT_RATE = 0.033  # matches the real Home Credit default rate
+
+# Categorical levels (mirroring the real Home Credit values where sensible).
+SEX_LEVELS = ["F", "M"]
+INCOME_TYPE_LEVELS = [
+    "EMPLOYED", "PRIVATE_SECTOR_EMPLOYEE", "RETIRED_PENSIONER",
+    "SALARIED_GOVT", "SELFEMPLOYED", "OTHER",
+]
+FAMILY_STATUS_LEVELS = ["SINGLE", "MARRIED", "DIVORCED", "WIDOWED", "LIVING_WITH_PARTNER"]
+EMPLOYMENT_DURATION_LEVELS = ["LESS_ONE", "MORE_ONE", "MORE_FIVE"]
+EDUCATION_LEVELS = ["level_1", "level_2", "level_3", "level_4", "level_5", "level_6"]
 
 
 def _calibrate_intercept(lp: np.ndarray, target_rate: float, seed: int) -> float:
-    """Find intercept offset so mean(sigmoid(lp + offset)) ~= target_rate."""
     rng = np.random.default_rng(seed)
     lo, hi = -10.0, 10.0
-    target = target_rate
-    for _ in range(60):  # bisection — sigmoid monotonic in offset
+    for _ in range(60):
         mid = (lo + hi) / 2
         rate = (1 / (1 + np.exp(-(lp + mid)))).mean()
-        if rate < target:
+        if rate < target_rate:
             lo = mid
         else:
             hi = mid
     return (lo + hi) / 2
 
 
-# ---------------------------------------------------------------------------
-# Core generator
-# ---------------------------------------------------------------------------
 def generate(
-    n_samples: int | None = None,
+    n_samples: int = 60000,
     seed: int | None = None,
-    default_rate: float | None = None,
-    fraud_rate: float | None = None,
+    default_rate: float = DEFAULT_RATE,
 ) -> pd.DataFrame:
-    """Generate a synthetic applicant DataFrame with a ``default_flag`` target."""
-    cfg = get_config().data
-    n_samples = int(cfg.n_samples if n_samples is None else n_samples)
-    seed = int(get_config().random_seed if seed is None else seed)
-    default_rate = float(cfg.default_rate if default_rate is None else default_rate)
-    fraud_rate = float(cfg.fraud_rate if fraud_rate is None else fraud_rate)
-
+    cfg = get_config()
+    seed = int(cfg.random_seed if seed is None else seed)
     rng = np.random.default_rng(seed)
-    n = n_samples
+    n = int(n_samples)
 
-    age = np.clip(rng.normal(42, 12, n).round(), 18, 85).astype(int)
-    true_income = _lognormal(rng, mean=48000, sd=0.45, size=n, low=8000, high=350000)
-    months_employed = np.clip(rng.exponential(scale=70, size=n), 0, 360).round().astype(int)
-    num_open_accounts = (rng.poisson(5, n) + 1).astype(int)
-    inquiries = rng.poisson(1.2, n).astype(int)
-    missed_payments = rng.poisson(0.45, n).astype(int)
-    credit_limit = np.clip(true_income * rng.uniform(0.15, 0.6, n), 500, 120000)
-    credit_card_balance = np.clip(credit_limit * rng.uniform(0.0, 0.95, n), 0, None)
-    total_debt = np.clip(
-        true_income * rng.uniform(0.0, 0.85, n) + num_open_accounts * rng.uniform(800, 4000, n),
-        0,
-        None,
-    )
+    age = np.clip(rng.normal(45, 12, n), 21, 85)
+    income = np.clip(np.exp(rng.normal(np.log(50000), 0.5, n)), 2000, 200000)
+    credit_amount = np.clip(np.exp(rng.normal(np.log(70000), 0.6, n)), 2000, 400000)
+    total_debt = np.clip(income * rng.uniform(0.0, 0.6, n), 0, None)
+    current_debt = np.clip(total_debt * rng.uniform(0.2, 0.9, n), 0, None)
+    num_active_credits = rng.poisson(0.6, n)
+    num_credit_inquiries = rng.poisson(1.5, n)
+    recent_applications = rng.poisson(1.0, n)
+    max_dpd_12m = rng.poisson(0.1, n)            # mostly 0
+    num_installments = rng.poisson(2.0, n)
 
-    employment_status = rng.choice(
-        ["Employed", "Self-Employed", "Unemployed", "Retired"],
-        size=n,
-        p=[0.62, 0.18, 0.12, 0.08],
-    )
-    home_ownership = rng.choice(
-        ["Rent", "Mortgage", "Own", "Other"], size=n, p=[0.38, 0.42, 0.17, 0.03]
-    )
-    loan_purpose = rng.choice(
-        ["debt_consolidation", "home_improvement", "major_purchase", "credit_card", "other"],
-        size=n,
-        p=[0.34, 0.20, 0.18, 0.18, 0.10],
-    )
-    region = rng.choice(
-        ["Capital", "North", "South", "West", "East"], size=n, p=[0.30, 0.25, 0.20, 0.15, 0.10]
-    )
+    sex = rng.choice(SEX_LEVELS, size=n)
+    income_type = rng.choice(INCOME_TYPE_LEVELS, size=n, p=[0.30, 0.25, 0.15, 0.12, 0.10, 0.08])
+    family_status = rng.choice(FAMILY_STATUS_LEVELS, size=n, p=[0.35, 0.40, 0.10, 0.05, 0.10])
+    employment_duration = rng.choice(EMPLOYMENT_DURATION_LEVELS, size=n, p=[0.20, 0.45, 0.35])
+    education = rng.choice(EDUCATION_LEVELS, size=n)
 
-    # --- Fraud subset: income materially overstated (reported >> true) ----------
-    is_fraud = rng.random(n) < fraud_rate
-    reported_income = true_income.copy()
-    reported_income[is_fraud] = reported_income[is_fraud] * rng.uniform(2.5, 4.0, is_fraud.sum())
-
-    # --- Latent risk from TRUE quantities (the DGP the model must rediscover) ---
-    dti = total_debt / np.maximum(reported_income, 1.0)
-    util = credit_card_balance / np.maximum(credit_limit, 1.0)
-    unemp = (employment_status == "Unemployed").astype(float)
-
+    # --- Latent risk (the DGP the model must rediscover) ---
+    dti = total_debt / np.maximum(income, 1.0)
+    emp_effect = np.where(employment_duration == "LESS_ONE", 0.6,
+                  np.where(employment_duration == "MORE_FIVE", -0.3, 0.0))
+    it_effect = np.where(np.isin(income_type, ["RETIRED_PENSIONER", "SELFEMPLOYED", "OTHER"]), 0.3, 0.0)
     latent = (
-        1.6 * np.log1p(missed_payments)
-        + 1.2 * util
+        1.2 * np.log1p(max_dpd_12m)
         + 0.9 * np.clip(dti, 0, 2)
-        + 0.35 * np.log1p(inquiries)
-        - 0.30 * np.log1p(months_employed)
-        - 0.55 * np.log(true_income / 48000.0)
-        - 0.04 * (age - 42)
-        + 0.9 * unemp
+        + 0.5 * np.log1p(num_credit_inquiries)
+        + 0.3 * np.log1p(num_installments)
+        - 0.6 * np.log(income / 50000.0)
+        - 0.03 * (age - 45)
+        + emp_effect
+        + it_effect
     )
-    # Fraudsters are riskier in reality (their true income is far lower).
-    latent = latent + is_fraud.astype(float) * 1.1
-
     offset = _calibrate_intercept(latent, default_rate, seed + 1)
     pd_proba = 1 / (1 + np.exp(-(latent + offset)))
     default_flag = rng.binomial(1, pd_proba).astype(int)
 
     df = pd.DataFrame(
         {
-            "application_id": np.arange(1, n + 1, dtype=int),
+            "case_id": np.arange(1, n + 1, dtype=int),
             "age": age,
-            "annual_income": reported_income.round(2),
-            "months_employed": months_employed,
-            "num_open_accounts": num_open_accounts,
-            "num_credit_inquiries_12m": inquiries,
-            "total_debt": total_debt.round(2),
-            "credit_limit": credit_limit.round(2),
-            "missed_payments_12m": missed_payments,
-            "credit_card_balance": credit_card_balance.round(2),
-            "employment_status": employment_status,
-            "home_ownership": home_ownership,
-            "loan_purpose": loan_purpose,
-            "region": region,
-            "is_fraud": is_fraud.astype(int),
+            "income": income,
+            "credit_amount": credit_amount,
+            "total_debt": total_debt,
+            "current_debt": current_debt,
+            "num_active_credits": num_active_credits,
+            "num_credit_inquiries": num_credit_inquiries,
+            "recent_applications": recent_applications,
+            "max_dpd_12m": max_dpd_12m,
+            "num_installments": num_installments,
+            "sex": sex,
+            "education": education,
+            "income_type": income_type,
+            "family_status": family_status,
+            "employment_duration": employment_duration,
             "default_flag": default_flag,
         }
     )
     logger.info(
-        "Generated %d applicants | default_rate=%.3f (target %.3f) | fraud_rate=%.3f",
-        n,
-        df["default_flag"].mean(),
-        default_rate,
-        df["is_fraud"].mean(),
+        "Generated %d synthetic applicants | default_rate=%.3f (target %.3f)",
+        n, df["default_flag"].mean(), default_rate,
     )
     return df
 
 
 def main() -> None:  # pragma: no cover - CLI entry point
-    from ..utils.io import write_parquet
-
     df = generate()
     out = path("data.raw_path")
     write_parquet(df, out)

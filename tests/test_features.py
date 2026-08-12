@@ -6,6 +6,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 
 from credit_risk.features.engineering import (
+    INDICATOR_SPECS,
     RATIO_SPECS,
     RatioAdder,
     build_pipeline,
@@ -17,8 +18,12 @@ def test_ratio_adder_creates_engineered_columns(small_df, feature_cols):
     added = RatioAdder().fit_transform(small_df[feature_cols])
     for name in RATIO_SPECS:
         assert name in added.columns
-    # No unexpected inf values (divide-by-zero guarded).
-    assert not np.isinf(added["credit_utilization"].replace([np.inf], np.nan)).any()
+    for name in INDICATOR_SPECS:
+        assert name in added.columns
+    # inquiry_intensity denominator is (active_credits + 1) -> never inf / NaN.
+    assert added["inquiry_intensity"].replace([np.inf, -np.inf], np.nan).isna().sum() == 0
+    # dpd_flag is binary.
+    assert set(added["dpd_flag"].unique()).issubset({0.0, 1.0})
 
 
 def test_pipeline_fit_predict(small_df, feature_cols, target_col):

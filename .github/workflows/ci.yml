@@ -50,8 +50,8 @@ jobs:
           pip install -e .
           pip install httpx matplotlib
 
-      - name: Generate data
-        run: python -m credit_risk.data.synthetic
+      - name: Download data (Hugging Face)
+        run: python -m credit_risk.data.huggingface
 
       - name: Ingest
         run: python -m credit_risk.data.ingestion

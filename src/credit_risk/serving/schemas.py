@@ -5,21 +5,23 @@ from pydantic import BaseModel, Field
 
 
 class Applicant(BaseModel):
-    """A single credit applicant (raw scoring features)."""
+    """A single credit applicant (raw scoring features, Home Credit schema)."""
 
     age: int = Field(..., ge=18, le=100, description="Applicant age in years")
-    annual_income: float = Field(..., gt=0, description="Reported annual income")
-    months_employed: int = Field(..., ge=0, description="Months in current employment")
-    num_open_accounts: int = Field(..., ge=0, description="Number of open credit accounts")
-    num_credit_inquiries_12m: int = Field(..., ge=0, description="Hard inquiries in the last 12 months")
+    income: float = Field(..., gt=0, description="Occupation income")
+    credit_amount: float = Field(..., ge=0, description="Credit amount applied for")
     total_debt: float = Field(..., ge=0, description="Total outstanding debt")
-    credit_limit: float = Field(..., ge=0, description="Total credit card limit")
-    missed_payments_12m: int = Field(..., ge=0, description="Missed payments in the last 12 months")
-    credit_card_balance: float = Field(..., ge=0, description="Current credit card balance")
-    employment_status: str
-    home_ownership: str
-    loan_purpose: str
-    region: str
+    current_debt: float = Field(..., ge=0, description="Current debt")
+    num_active_credits: int = Field(..., ge=0, description="Number of active credits")
+    num_credit_inquiries: int = Field(..., ge=0, description="Number of credit queries")
+    recent_applications: int = Field(..., ge=0, description="Recent application count")
+    max_dpd_12m: int = Field(..., ge=0, description="Max days past due in last 12 months")
+    num_installments: int = Field(..., ge=0, description="Number of installments")
+    sex: str
+    education: str
+    income_type: str
+    family_status: str
+    employment_duration: str
 
 
 class PredictionResponse(BaseModel):

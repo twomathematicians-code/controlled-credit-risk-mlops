@@ -7,10 +7,11 @@
 > business-impact model, a Streamlit dashboard, Docker + CI, and an **Azure**
 > deployment guide.
 
-This repository is intentionally one self-contained flagship project. It runs on
-**synthetic data** (no downloads, no licensing, CI-friendly) with a *known
-data-generating process*, so every component — including monitoring — works out
-of the box.
+This repository is intentionally one self-contained flagship project. It trains
+on **real data from Hugging Face** — the [Home Credit Default Risk](https://huggingface.co/datasets/deburky/home-credit-credit-risk-model-stability)
+benchmark (522k real loan applications) — so the model, the drift simulations
+and the business-impact trade-offs reflect genuine credit-risk behaviour. A
+schema-matched synthetic generator is bundled as an offline fallback.
 
 ---
 
@@ -26,21 +27,22 @@ only accurate, but **governed, monitored, explainable and tied to money**:
 
 ---
 
-## Headline results (champion model, synthetic test set)
+## Headline results (champion model, Home Credit test set)
 
 | Metric | Value |
 |---|---|
-| Champion model | Gradient Boosting (`gbdt`) |
-| Test ROC-AUC | **0.762** (95% CI **0.730 – 0.792**, 300-bootstrap) |
-| Test PR-AUC | 0.245 (base default rate ≈ 8%) |
-| CV ROC-AUC (5-fold) | 0.753 ± 0.012 |
-| **Cost-optimal PD threshold** | **≈ 11.8%** (realised loss + opportunity cost minimised) |
-| Approval rate @ optimum | **82.6%** |
-| Realised loss (FN) / Opportunity cost (FP) | 2.10m / 1.06m (currency units, test set) |
+| Dataset | Home Credit Default Risk — 60k stratified sample of 522k real applications (~3.3% default) |
+| Champion model | XGBoost (`xgboost`) |
+| Test ROC-AUC | **0.711** (95% CI **0.686 – 0.734**, 300-bootstrap) |
+| Test PR-AUC | 0.104 (base default rate ≈ 3.3%) |
+| CV ROC-AUC (5-fold) | 0.730 ± 0.013 |
+| **Cost-optimal PD threshold** | **≈ 13.3%** (realised loss + opportunity cost minimised) |
+| Approval rate @ optimum | 97.6% (declines only the highest-risk tail) |
 
 > The threshold is chosen to minimise **realised loss (false negatives × LGD × EAD)
 > + opportunity cost (false positives × foregone profit)**, not to maximise F1 —
-> the framing that matters in a risk-controlled setting.
+> the framing that matters in a risk-controlled setting. The dashboard's
+> interactive slider lets you explore the full approval/loss trade-off.
 
 ---
 
@@ -66,7 +68,9 @@ only accurate, but **governed, monitored, explainable and tied to money**:
 
 ```mermaid
 flowchart LR
-    SG[Synthetic data\ngenerator] --> ING[Ingestion\nschema + null policy + split]
+    HF[(Hugging Face\nHome Credit dataset)] --> DL[Loader\ndownload + clean + map]
+    SYN[Synthetic\noffline fallback] -.-> DL
+    DL --> ING[Ingestion\nschema + null policy + split]
     ING --> REF[(Drift reference\nfrozen snapshot)]
     ING --> FE[Feature engineering\nratios + impute + encode + scale]
     FE --> TR[Training\nCV + bootstrap CI]
@@ -92,7 +96,7 @@ controlled-credit-risk-mlops/
 ├─ Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 ├─ src/credit_risk/
 │  ├─ config.py                # config loader (env overrides, path resolution)
-│  ├─ data/{synthetic,ingestion}.py
+│  ├─ data/{huggingface,synthetic,ingestion}.py   # HF source + offline fallback + ingest
 │  ├─ features/{engineering,store}.py   # sklearn pipeline + feature-store abstraction
 │  ├─ models/{train,registry,explainability}.py
 │  ├─ serving/{app,schemas}.py          # FastAPI
@@ -113,8 +117,8 @@ controlled-credit-risk-mlops/
 # 1. Install (editable, with dev + dashboard extras)
 make install            # or: pip install -e ".[dev,dashboard]"
 
-# 2. Generate data + train + register the champion model
-make data
+# 2. Download real data (Home Credit, from Hugging Face) + train + register
+make data               # `make data-synthetic` for the offline fallback
 make train              # logs to MLflow, registers v1, promotes to Production
 
 # 3. Serve the Production model
@@ -132,12 +136,12 @@ curl -s http://127.0.0.1:8000/health
 # {"status":"ok","model_name":"credit_risk_pd_model","model_version":1,"stage":"Production",...}
 
 curl -s -X POST http://127.0.0.1:8000/predict -H "Content-Type: application/json" -d '{
-  "age":38,"annual_income":62000,"months_employed":48,"num_open_accounts":4,
-  "num_credit_inquiries_12m":1,"total_debt":12000,"credit_limit":15000,
-  "missed_payments_12m":0,"credit_card_balance":3000,
-  "employment_status":"Employed","home_ownership":"Mortgage",
-  "loan_purpose":"home_improvement","region":"Capital"}'
-# {"pd_score":0.0275,"decision":"APPROVE","reasons":[...]}
+  "age":40,"income":55000,"credit_amount":60000,"total_debt":9000,"current_debt":5000,
+  "num_active_credits":1,"num_credit_inquiries":2,"recent_applications":1,
+  "max_dpd_12m":0,"num_installments":3,
+  "sex":"F","education":"level_3","income_type":"EMPLOYED",
+  "family_status":"MARRIED","employment_duration":"MORE_FIVE"}'
+# {"pd_score":...,"decision":"APPROVE","reasons":[...]}
 ```
 
 ### Docker
@@ -228,12 +232,17 @@ tests**, an **end-to-end** job (data → train → register → live smoke test)
 
 ## Design notes & honest limitations
 
-- **Synthetic data**: real signal (a latent risk score) but not a real loan
-  book. Replacing `data/synthetic.py` with a registered dataset is the only
-  change needed to go live — every downstream stage is data-agnostic.
+- **Data**: trained on the real **Home Credit Default Risk** dataset from Hugging
+  Face (60k stratified sample of 522k applications, ~3.3% default). AUC ≈ 0.71 is
+  realistic for this benchmark with the selected feature set — Home Credit is
+  genuinely hard. A schema-matched synthetic generator is bundled for offline/CI
+  use (`make data-synthetic`); to use your own data, point `data.huggingface` in
+  `config.yaml` at another HF dataset or replace the loader — every downstream
+  stage is data-agnostic.
 - **Models**: scikit-learn (LogisticRegression baseline + GradientBoosting) plus
-  **XGBoost** as a third candidate — the champion is selected by CV ROC-AUC. The
-  pipeline/registry abstractions make swapping in other estimators a one-line change.
+  **XGBoost** as a third candidate — the champion (XGBoost on this data) is
+  selected by CV ROC-AUC. The pipeline/registry abstractions make swapping in
+  other estimators a one-line change.
 - **Statistical validation**: stratified k-fold CV + bootstrap AUC CI +
   calibration curve (see `notebooks/01_eda_and_validation.py`).
 - **MLflow 3**: uses the modern **alias**-based registry; falls back to stages

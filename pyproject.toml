@@ -29,6 +29,7 @@ dependencies = [
   "shap>=0.43",
   "pyarrow>=12.0",
   "xgboost>=2.0",
+  "huggingface_hub>=0.20",
 ]
 
 [project.optional-dependencies]

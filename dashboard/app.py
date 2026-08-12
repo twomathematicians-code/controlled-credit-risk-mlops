@@ -66,7 +66,7 @@ def _demo_bootstrap():
     from sklearn.metrics import average_precision_score, roc_auc_score
     from sklearn.model_selection import train_test_split
 
-    from credit_risk.data import ingestion, synthetic
+    from credit_risk.data import huggingface, ingestion, synthetic
     from credit_risk.features.engineering import build_pipeline
     from credit_risk.models import train as trainmod
 
@@ -74,7 +74,14 @@ def _demo_bootstrap():
     feat = list(cfg.data.numeric_features) + list(cfg.data.categorical_features)
     target = cfg.data.target_column
 
-    df = ingestion.validate_schema(synthetic.generate(n_samples=6000, seed=42))
+    # Cloud demo: real Home Credit data (small sample). Offline fallback: synthetic.
+    try:
+        raw = huggingface.load(sample_size=8000, seed=42)
+        data_source = "Home Credit (demo sample)"
+    except Exception:
+        raw = synthetic.generate(n_samples=8000, seed=42)
+        data_source = "synthetic (offline)"
+    df = ingestion.validate_schema(raw)
     train_df, test_df = train_test_split(df, test_size=0.2, random_state=42, stratify=df[target])
     pipeline = build_pipeline(LogisticRegression(max_iter=500))
     pipeline.fit(train_df[feat], train_df[target])
@@ -87,7 +94,7 @@ def _demo_bootstrap():
     opt_t, opt_m = business.optimal_threshold(y, scores)
     curve = business.threshold_curve(y, scores)
     metrics = {
-        "champion": "logreg (demo)",
+        "champion": f"logreg ({data_source})",
         "test_roc_auc": auc,
         "test_average_precision": ap,
         "test_roc_auc_ci": [lo, hi],
@@ -144,35 +151,29 @@ def load_artifacts():
     return cfg, feat, test, pipeline, scores, y, metrics, curve, reference, version, shap_fig
 
 
-def _applicant_form(cfg, pipeline, reference, threshold):
+def _applicant_form(cfg, pipeline, reference, threshold, sample_df):
+    """Data-driven single-applicant scorer built from the live feature schema."""
     st.subheader("Score a single applicant")
+    num_cols = list(cfg.data.numeric_features)
+    cat_cols = list(cfg.data.categorical_features)
     with st.form("applicant"):
-        c1, c2, c3 = st.columns(3)
-        age = c1.number_input("Age", 18, 90, 40)
-        income = c2.number_input("Annual income", 8000, 400000, 60000, step=1000)
-        months = c3.number_input("Months employed", 0, 360, 48)
-        c4, c5, c6 = st.columns(3)
-        open_acc = c4.number_input("Open accounts", 0, 30, 4)
-        inquiries = c5.number_input("Inquiries (12m)", 0, 20, 1)
-        missed = c6.number_input("Missed payments (12m)", 0, 12, 0)
-        c7, c8 = st.columns(2)
-        debt = c7.number_input("Total debt", 0, 500000, 12000, step=1000)
-        limit = c8.number_input("Credit limit", 0, 200000, 18000, step=1000)
-        balance = c7.number_input("Card balance", 0, 200000, 4000, step=500)
-        emp = c2.selectbox("Employment", ["Employed", "Self-Employed", "Unemployed", "Retired"])
-        home = c4.selectbox("Home ownership", ["Rent", "Mortgage", "Own", "Other"])
-        purpose = c5.selectbox("Loan purpose", [
-            "debt_consolidation", "home_improvement", "major_purchase", "credit_card", "other"])
-        region = c6.selectbox("Region", ["Capital", "North", "South", "West", "East"])
+        values: dict = {}
+        cols = st.columns(3)
+        for i, col in enumerate(num_cols):
+            s = pd.to_numeric(sample_df[col], errors="coerce").dropna()
+            med = float(s.median()) if len(s) else 0.0
+            mn, mx = float(s.min()) if len(s) else 0.0, float(s.max()) if len(s) else 1.0
+            step = (mx - mn) / 100.0 or 1.0
+            with cols[i % 3]:
+                values[col] = st.number_input(col, min_value=mn, max_value=mx, value=med, step=step, key=f"n_{col}")
+        cols2 = st.columns(3)
+        for i, col in enumerate(cat_cols):
+            levels = sorted(sample_df[col].astype(str).unique().tolist())
+            with cols2[i % 3]:
+                values[col] = st.selectbox(col, levels, key=f"c_{col}")
         submitted = st.form_submit_button("Score")
     if submitted:
-        row = pd.DataFrame([{
-            "age": int(age), "annual_income": float(income), "months_employed": int(months),
-            "num_open_accounts": int(open_acc), "num_credit_inquiries_12m": int(inquiries),
-            "total_debt": float(debt), "credit_limit": float(limit),
-            "missed_payments_12m": int(missed), "credit_card_balance": float(balance),
-            "employment_status": emp, "home_ownership": home, "loan_purpose": purpose, "region": region,
-        }])
+        row = pd.DataFrame([values])
         pd_score = float(pipeline.predict_proba(row)[0, 1])
         decision = "DECLINE" if pd_score >= threshold else "APPROVE"
         col_a, col_b = st.columns(2)
@@ -269,7 +270,7 @@ def main():  # pragma: no cover - UI entry point
             st.info("SHAP summary unavailable in this environment.")
 
     with tab5:
-        _applicant_form(cfg, pipeline, reference, threshold)
+        _applicant_form(cfg, pipeline, reference, threshold, test)
 
 
 if __name__ == "__main__":  # pragma: no cover

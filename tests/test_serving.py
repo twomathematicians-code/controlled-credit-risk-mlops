@@ -9,22 +9,20 @@ from credit_risk.serving import app as app_module
 
 
 def _valid_applicant(small_df):
+    """Build a valid applicant dict from a data row, driven by the API schema."""
+    from credit_risk.serving.schemas import Applicant
+
     row = small_df.iloc[0]
-    return {
-        "age": int(row["age"]),
-        "annual_income": float(row["annual_income"]),
-        "months_employed": int(row["months_employed"]),
-        "num_open_accounts": int(row["num_open_accounts"]),
-        "num_credit_inquiries_12m": int(row["num_credit_inquiries_12m"]),
-        "total_debt": float(row["total_debt"]),
-        "credit_limit": float(row["credit_limit"]),
-        "missed_payments_12m": int(row["missed_payments_12m"]),
-        "credit_card_balance": float(row["credit_card_balance"]),
-        "employment_status": str(row["employment_status"]),
-        "home_ownership": str(row["home_ownership"]),
-        "loan_purpose": str(row["loan_purpose"]),
-        "region": str(row["region"]),
-    }
+    applicant = {}
+    for field, info in Applicant.model_fields.items():
+        v = row[field]
+        if info.annotation is int:
+            applicant[field] = int(v)
+        elif info.annotation is float:
+            applicant[field] = float(v)
+        else:
+            applicant[field] = str(v)
+    return applicant
 
 
 @pytest.fixture
